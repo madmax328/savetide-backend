@@ -46,16 +46,19 @@ app.post('/api/compare', async (req, res) => {
     // TEMPORARY: Accept ALL results to see what Google Shopping returns
     let filtered = shoppingResults
       .filter(item => item.extracted_price && item.extracted_price > 0)
-      .map(item => ({
-        title: item.title,
-        price: item.extracted_price,
-        priceFormatted: `$${item.extracted_price.toFixed(2)}`,
-        source: item.source || 'Unknown',
-        link: item.link,
-        image: item.thumbnail,
-        rating: item.rating,
-        reviews: item.reviews
-      }));
+      .map(item => {
+        console.log(`[DEBUG] Item: ${item.title?.substring(0, 30)}... | Source: ${item.source} | Link: ${item.link ? 'YES' : 'NO'}`);
+        return {
+          title: item.title,
+          price: item.extracted_price,
+          priceFormatted: `$${item.extracted_price.toFixed(2)}`,
+          source: item.source || 'Unknown',
+          link: item.link || item.product_link || '#',
+          image: item.thumbnail,
+          rating: item.rating,
+          reviews: item.reviews
+        };
+      });
 
     console.log(`[SaveTide] ${filtered.length} results with price`);
 
