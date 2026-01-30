@@ -43,17 +43,17 @@ app.post('/api/compare', async (req, res) => {
     
     console.log(`[SaveTide] Found ${shoppingResults.length} results`);
 
-    // TEMPORARY: Accept ALL results to see what Google Shopping returns
+    // Accept ALL results with product_link
     let filtered = shoppingResults
-      .filter(item => item.extracted_price && item.extracted_price > 0)
+      .filter(item => item.extracted_price && item.extracted_price > 0 && item.product_link)
       .map(item => {
-        console.log(`[DEBUG] Item: ${item.title?.substring(0, 30)}... | Source: ${item.source} | Link: ${item.link ? 'YES' : 'NO'}`);
+        console.log(`[DEBUG] Item: ${item.title?.substring(0, 30)}... | Source: ${item.source} | Link: ${item.product_link ? 'YES' : 'NO'}`);
         return {
           title: item.title,
           price: item.extracted_price,
           priceFormatted: `$${item.extracted_price.toFixed(2)}`,
           source: item.source || 'Unknown',
-          link: item.link || item.product_link || '#',
+          link: item.product_link, // ← FIX: Use product_link!
           image: item.thumbnail,
           rating: item.rating,
           reviews: item.reviews
