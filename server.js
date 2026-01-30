@@ -1,4 +1,4 @@
-// SaveTide Backend (US version)
+// SaveTide Backend (US version) - FIXED
 // server.js
 
 const express = require('express');
@@ -12,23 +12,35 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// US Trusted merchants
-const TRUSTED_MERCHANTS = [
-  'amazon.com',
-  'walmart.com',
-  'target.com',
-  'bestbuy.com',
-  'ebay.com',
-  'newegg.com',
-  'homedepot.com',
-  'costco.com',
-  'bhphotovideo.com',
-  'adorama.com'
-];
+// US Trusted merchants - with variations
+const TRUSTED_MERCHANTS = {
+  'amazon': ['amazon.com', 'amazon.com/'],
+  'walmart': ['walmart.com', 'walmart.com/'],
+  'target': ['target.com', 'target.com/'],
+  'bestbuy': ['bestbuy.com', 'best buy'],
+  'ebay': ['ebay.com', 'ebay.com/'],
+  'newegg': ['newegg.com', 'newegg.com/'],
+  'homedepot': ['homedepot.com', 'home depot'],
+  'costco': ['costco.com', 'costco.com/'],
+  'bhphoto': ['bhphotovideo.com', 'b&h'],
+  'adorama': ['adorama.com', 'adorama.com/']
+};
 
-function isTrustedMerchant(link) {
-  const linkLower = link.toLowerCase();
-  return TRUSTED_MERCHANTS.some(merchant => linkLower.includes(merchant));
+function isTrustedMerchant(source) {
+  if (!source) return false;
+  
+  const sourceLower = source.toLowerCase();
+  
+  // Check against all merchant variations
+  for (const [merchant, variations] of Object.entries(TRUSTED_MERCHANTS)) {
+    for (const variation of variations) {
+      if (sourceLower.includes(variation)) {
+        return true;
+      }
+    }
+  }
+  
+  return false;
 }
 
 function extractDomain(url) {
@@ -38,6 +50,14 @@ function extractDomain(url) {
   } catch {
     return url;
   }
+}
+
+function cleanMerchantName(source) {
+  // Remove common suffixes
+  return source
+    .replace(/\.com$/i, '')
+    .replace(/\s*-\s*.*$/, '') // Remove everything after dash
+    .trim();
 }
 
 app.post('/api/compare', async (req, res) => {
@@ -64,7 +84,7 @@ app.post('/api/compare', async (req, res) => {
         api_key: serpApiKey,
         gl: 'us', // United States
         hl: 'en', // English
-        num: 20
+        num: 40
       }
     });
 
@@ -72,14 +92,30 @@ app.post('/api/compare', async (req, res) => {
     
     console.log(`[SaveTide] Found ${shoppingResults.length} results`);
 
-    // Filter trusted merchants
+    // Map and filter - check BOTH link and source
     let filtered = shoppingResults
-      .filter(item => item.link && isTrustedMerchant(item.link))
+      .filter(item => {
+        // Must have price
+        if (!item.extracted_price || item.extracted_price <= 0) return false;
+        
+        // Check if source is trusted (more important than link!)
+        if (item.source && isTrustedMerchant(item.source)) {
+          return true;
+        }
+        
+        // Fallback: check link domain
+        if (item.link) {
+          const domain = extractDomain(item.link);
+          return isTrustedMerchant(domain);
+        }
+        
+        return false;
+      })
       .map(item => ({
         title: item.title,
-        price: item.extracted_price || 0,
-        priceFormatted: `$${(item.extracted_price || 0).toFixed(2)}`,
-        source: item.source || 'Unknown',
+        price: item.extracted_price,
+        priceFormatted: `$${item.extracted_price.toFixed(2)}`,
+        source: cleanMerchantName(item.source || 'Unknown'),
         link: item.link,
         image: item.thumbnail,
         rating: item.rating,
@@ -88,18 +124,18 @@ app.post('/api/compare', async (req, res) => {
 
     console.log(`[SaveTide] ${filtered.length} trusted merchants`);
 
-    // Deduplicate by domain (keep cheapest from each merchant)
-    const byDomain = {};
+    // Deduplicate by source name (keep cheapest from each merchant)
+    const bySource = {};
     
     filtered.forEach(item => {
-      const domain = extractDomain(item.link);
+      const sourceKey = item.source.toLowerCase();
       
-      if (!byDomain[domain] || item.price < byDomain[domain].price) {
-        byDomain[domain] = item;
+      if (!bySource[sourceKey] || item.price < bySource[sourceKey].price) {
+        bySource[sourceKey] = item;
       }
     });
 
-    const deduplicated = Object.values(byDomain);
+    const deduplicated = Object.values(bySource);
     
     console.log(`[SaveTide] ${deduplicated.length} after deduplication`);
 
@@ -125,8 +161,43 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'SaveTide Backend US' });
 });
 
+// DEBUG endpoint to see raw results
+app.post('/api/debug', async (req, res) => {
+  try {
+    const { query } = req.body;
+    const serpApiKey = process.env.SERPAPI_KEY;
+
+    const response = await axios.get('https://serpapi.com/search.json', {
+      params: {
+        engine: 'google_shopping',
+        q: query,
+        api_key: serpApiKey,
+        gl: 'us',
+        hl: 'en',
+        num: 20
+      }
+    });
+
+    const results = response.data.shopping_results || [];
+    
+    // Return first 5 with source info
+    const debug = results.slice(0, 5).map(item => ({
+      title: item.title,
+      price: item.extracted_price,
+      source: item.source,
+      link: item.link,
+      isTrusted: isTrustedMerchant(item.source)
+    }));
+
+    res.json({ debug, total: results.length });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`[SaveTide] Backend running on port ${PORT}`);
   console.log(`[SaveTide] Target: United States (US)`);
-  console.log(`[SaveTide] Merchants: ${TRUSTED_MERCHANTS.length}`);
+  console.log(`[SaveTide] Merchants: ${Object.keys(TRUSTED_MERCHANTS).length}`);
 });
