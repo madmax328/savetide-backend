@@ -12,6 +12,12 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+const SERPAPI_KEY = process.env.SERPAPI_KEY;
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', version: 'us-fixed' });
+});
+
 // US Trusted merchants
 const TRUSTED_MERCHANTS = [
   'amazon', 'walmart', 'target', 'best buy', 'bestbuy',
@@ -42,33 +48,31 @@ function extractDomain(source) {
 app.post('/api/compare', async (req, res) => {
   try {
     const { query } = req.body;
-    
+
     if (!query) {
-      return res.status(400).json({ error: 'Query is required' });
+      return res.status(400).json({ error: 'Query required' });
     }
 
-    console.log('[SaveTide] Searching for:', query);
-
-    const serpApiKey = process.env.SERPAPI_KEY;
-    
-    if (!serpApiKey) {
-      return res.status(500).json({ error: 'SERPAPI_KEY not configured' });
-    }
+    console.log(`\n[API] Searching: "${query}"`);
 
     const response = await axios.get('https://serpapi.com/search.json', {
       params: {
         engine: 'google_shopping',
         q: query,
-        api_key: serpApiKey,
+        api_key: SERPAPI_KEY,
         gl: 'us',
         hl: 'en',
         num: 40
-      }
+      },
+      timeout: 15000
     });
 
     const shoppingResults = response.data.shopping_results || [];
-    
-    console.log(`[SaveTide] Found ${shoppingResults.length} results`);
+    console.log(`[Shopping] ${shoppingResults.length} raw results`);
+
+    if (shoppingResults.length === 0) {
+      return res.json({ results: [], total: 0 });
+    }
 
     // Map PUIS filter (comme PriceWatch)
     const filteredResults = shoppingResults
@@ -117,30 +121,24 @@ app.post('/api/compare', async (req, res) => {
     }
 
     // Trier par prix et limiter
-    const finalResults = Array.from(byDomain.values())
+    const finalResults = Array.from(byMerchant.values())
       .sort((a, b) => a.price - b.price)
       .slice(0, 10);
 
-    console.log(`[SaveTide] ${finalResults.length} after deduplication`);
-    console.log(`[SaveTide] Sources:`, finalResults.map(r => r.source).join(', '));
+    console.log(`[API] ${finalResults.length} trusted merchants:`);
+    finalResults.forEach((r, i) => {
+      console.log(`  ${i+1}. ${r.source} - ${r.price}€`);
+    });
 
-    res.json({
-      query,
-      total: finalResults.length,
-      results: finalResults
+    res.json({ 
+      results: finalResults,
+      total: finalResults.length 
     });
 
   } catch (error) {
-    console.error('[SaveTide] Error:', error.message);
-    res.status(500).json({ 
-      error: 'Failed to fetch prices',
-      message: error.message 
-    });
+    console.error('[API] Error:', error.message);
+    res.status(500).json({ error: 'Failed', details: error.message });
   }
-});
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'SaveTide Backend US - FIXED' });
 });
 
 app.listen(PORT, () => {
